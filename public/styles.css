@@ -3,15 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AI Trading</title>
+    <title>AI Trader Dashboard</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <div id="loginScreen" class="login-screen">
       <div class="login-card">
-        <h1>AI <span>Trading</span></h1>
-        <p class="subtitle">Angel One SmartAPI dashboard with multi-level strategy planning.</p>
-
+        <h1>AI <span>Trader</span></h1>
+        <p class="subtitle">Angel One dashboard with strategy ladder, risk engine, and AI signal view.</p>
         <div id="loginError" class="error-box"></div>
 
         <div class="field-group">
@@ -37,7 +36,7 @@
 
     <div id="appShell" class="app-shell hidden">
       <header class="topbar">
-        <div class="brand">AI <span>Trading</span></div>
+        <div class="brand">AI <span>Trader</span></div>
         <div class="topbar-right">
           <span class="status-pill"><span id="statusDot" class="status-dot"></span> <span id="statusText">Disconnected</span></span>
           <button id="logoutBtn" class="secondary-btn">Logout</button>
@@ -99,6 +98,39 @@
               <div class="stat-box">
                 <div class="stat-label">Volume</div>
                 <div id="volumeValue" class="stat-value">—</div>
+              </div>
+            </div>
+
+            <div class="chart-panel">
+              <div class="chart-header">
+                <div>
+                  <div class="chart-title">Market Pulse</div>
+                  <div class="chart-subtitle" id="chartSubtitle">1D • AI Signal</div>
+                </div>
+                <div class="chart-indicators">
+                  <span>EMA 9</span>
+                  <span>SMA 20</span>
+                  <span>VWAP</span>
+                </div>
+              </div>
+              <svg id="candlestickChart" viewBox="0 0 760 260" preserveAspectRatio="none"></svg>
+              <div class="signal-strip">
+                <div class="signal-box">
+                  <label>Signal</label>
+                  <strong id="signalLabel">Neutral</strong>
+                </div>
+                <div class="signal-box">
+                  <label>Confidence</label>
+                  <strong id="signalConfidence">--</strong>
+                </div>
+                <div class="signal-box">
+                  <label>Trend</label>
+                  <strong id="signalTrend">--</strong>
+                </div>
+                <div class="signal-box">
+                  <label>Volume</label>
+                  <strong id="signalVolume">--</strong>
+                </div>
               </div>
             </div>
 

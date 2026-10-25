@@ -1,63 +1,3751 @@
-const axios = require('axios');
+const state = {
+  apiKey: '',
+  jwtToken: '',
+  userName: '',
+  quote: null,
+  strategyPlan: [],
+  chartCandles: []
+};
 
-const BASE = 'https://apiconnect.angelone.in';
+const loginScreen = document.getElementById('loginScreen');
+const appShell = document.getElementById('appShell');
+const loginError = document.getElementById('loginError');
+const statusDot = document.getElementById('statusDot');
+const statusText = document.getElementById('statusText');
+const tradeLogBox = document.getElementById('tradeLogBox');
+const strategyList = document.getElementById('strategyList');
 
-function buildHeaders({ apiKey, jwtToken }) {
-  const headers = {
-    'Content-Type': 'application/json',
-    'Accept': 'application/json',
-    'X-UserType': 'USER',
-    'X-SourceID': 'WEB',
-    'X-ClientLocalIP': '127.0.0.1',
-    'X-ClientPublicIP': '127.0.0.1',
-    'X-MACAddress': '00:00:00:00:00:00',
-    'X-PrivateKey': apiKey
+function showError(message) {
+  loginError.textContent = message;
+  loginError.style.display = 'block';
+}
+
+function clearError() {
+  loginError.textContent = '';
+  loginError.style.display = 'none';
+}
+
+function logTrade(message) {
+  const stamp = new Date().toLocaleTimeString('en-IN', { hour12: false });
+  tradeLogBox.textContent = `[${stamp}] ${message}\n\n${tradeLogBox.textContent}`;
+}
+
+function setStatus(connected, label) {
+  statusDot.classList.toggle('live', connected);
+  statusDot.classList.toggle('error', !connected);
+  statusText.textContent = label || 'Disconnected';
+}
+
+function formatPrice(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '—';
+  return Number(value).toFixed(2);
+}
+
+function formatNumber(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '—';
+  const n = Number(value);
+  if (n >= 10000000) return `${(n / 10000000).toFixed(2)} Cr`;
+  if (n >= 100000) return `${(n / 100000).toFixed(2)} L`;
+  if (n >= 1000) return n.toLocaleString('en-IN');
+  return n.toString();
+}
+
+function buildCandlesFromQuote(ltp, prevClose = ltp, count = 24) {
+  const candles = [];
+  let base = prevClose || ltp || 100;
+
+  for (let i = 0; i < count; i++) {
+    const drift = (Math.sin((i + 1) * 0.8) * 1.8) + ((i % 5) - 2) * 0.45;
+    const open = base;
+    const close = base + drift;
+    const high = Math.max(open, close) + (Math.random() * 1.7 + 0.4);
+    const low = Math.min(open, close) - (Math.random() * 1.5 + 0.4);
+    base = close;
+    candles.push({ open, high, low, close, volume: 500 + i * 20 });
+  }
+
+  const last = candles[candles.length - 1];
+  if (ltp && last) {
+    last.close = Number(ltp);
+    last.high = Math.max(last.high, ltp, last.open);
+    last.low = Math.min(last.low, ltp, last.open);
+  }
+
+  return candles;
+}
+
+function computeSMA(candles, period) {
+  return candles.map((_, index) => {
+    const start = Math.max(0, index - period + 1);
+    const slice = candles.slice(start, index + 1);
+    const avg = slice.reduce((sum, c) => sum + Number(c.close), 0) / slice.length;
+    return avg;
+  });
+}
+
+function renderCandlestickChart() {
+  const svg = document.getElementById('candlestickChart');
+  if (!svg) return;
+
+  const candles = state.chartCandles.length ? state.chartCandles : buildCandlesFromQuote(Number(state.quote?.ltp || 100), Number(state.quote?.close || 100), 22);
+  const width = 760;
+  const height = 260;
+  const padding = 18;
+
+  const min = Math.min(...candles.map((c) => c.low));
+  const max = Math.max(...candles.map((c) => c.high));
+  const range = Math.max(max - min, 1);
+  const barWidth = ((width - padding * 2) / candles.length) * 0.6;
+
+  const sma9 = computeSMA(candles, 9);
+  const sma20 = computeSMA(candles, 20);
+
+  const toY = (value) => height - padding - ((value - min) / range) * (height - padding * 2);
+  const lines = [];
+
+  candles.forEach((c, i) => {
+    const x = padding + i * ((width - padding * 2) / candles.length) + 6;
+    const openY = toY(c.open);
+    const closeY = toY(c.close);
+    const highY = toY(c.high);
+    const lowY = toY(c.low);
+    const color = c.close >= c.open ? '#2ad19d' : '#ff6886';
+
+    lines.push(`<line x1="${x}" y1="${highY}" x2="${x}" y2="${lowY}" stroke="${color}" stroke-width="1.6" />`);
+    lines.push(`<rect x="${x - barWidth / 2}" y="${Math.min(openY, closeY)}" width="${barWidth}" height="${Math.max(Math.abs(closeY - openY), 3)}" rx="2" fill="${color}" opacity="0.95" />`);
+  });
+
+  const sma9Points = sma9.map((point, i) => {
+    const x = padding + i * ((width - padding * 2) / candles.length) + 6 + barWidth / 2;
+    const y = toY(point);
+    return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
+  }).join(' ');
+
+  const sma20Points = sma20.map((point, i) => {
+    const x = padding + i * ((width - padding * 2) / candles.length) + 6 + barWidth / 2;
+    const y = toY(point);
+    return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
+  }).join(' ');
+
+  svg.innerHTML = `
+    <defs>
+      <linearGradient id="gridFade" x1="0" x2="0" y1="0" y2="1">
+        <stop offset="0%" stop-color="rgba(255,255,255,0.04)" />
+        <stop offset="100%" stop-color="rgba(255,255,255,0.01)" />
+      </linearGradient>
+    </defs>
+    <rect x="0" y="0" width="760" height="260" fill="url(#gridFade)" />
+    ${Array.from({ length: 5 }).map((_, i) => {
+      const y = padding + (i * (height - padding * 2)) / 4;
+      return `<line x1="${padding}" x2="${width - padding}" y1="${y}" y2="${y}" stroke="rgba(255,255,255,0.08)" stroke-dasharray="4 6" />`;
+    }).join('')}
+    <path d="${sma9Points}" fill="none" stroke="#52a7ff" stroke-width="2.2" stroke-linecap="round" />
+    <path d="${sma20Points}" fill="none" stroke="#ffd166" stroke-width="2.0" stroke-linecap="round" opacity="0.9" />
+    ${lines.join('')}
+  `;
+}
+
+async function fetchAiSignal() {
+  if (!state.quote) return;
+
+  const symbol = document.getElementById('symbolInput').value.trim() || 'SBIN-EQ';
+  const ltp = Number(state.quote.ltp || 0);
+  const previousClose = Number(state.quote.close || 0);
+  const volume = Number(state.quote.tradeVolume || state.quote.volume || 0);
+  const averageVolume = Math.max(volume * 0.85, 1);
+  const trendScore = ltp - previousClose;
+  const momentumScore = previousClose ? ((ltp - previousClose) / previousClose) * 100 : 0;
+
+  try {
+    const response = await fetch('/api/ai/signal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbol, ltp, previousClose, volume, averageVolume, trendScore, momentumScore })
+    });
+
+    const payload = await response.json();
+    if (!response.ok || !payload.success) {
+      throw new Error(payload.message || 'AI signal request failed');
+    }
+
+    const signal = payload.signal || {};
+    document.getElementById('signalLabel').textContent = signal.label || 'Neutral';
+    document.getElementById('signalConfidence').textContent = `${signal.confidence || 0}%`;
+    document.getElementById('signalTrend').textContent = signal.delta >= 0 ? `+${signal.delta || 0}` : `${signal.delta || 0}`;
+    document.getElementById('signalVolume').textContent = `${(signal.volumeRatio || 1).toFixed(2)}x`;
+
+    const labelEl = document.getElementById('signalLabel');
+    labelEl.style.color = signal.isBullish ? '#2ad19d' : signal.isBearish ? '#ff6886' : '#71b7ff';
+  } catch (error) {
+    document.getElementById('signalLabel').textContent = 'Signal Error';
+    document.getElementById('signalLabel').style.color = '#ff6886';
+    document.getElementById('signalConfidence').textContent = '--';
+    document.getElementById('signalTrend').textContent = '--';
+    document.getElementById('signalVolume').textContent = '--';
+    logTrade(`AI signal error: ${error.message}`);
+  }
+}
+
+async function doLogin() {
+  const apiKey = document.getElementById('apiKey').value.trim();
+  const clientCode = document.getElementById('clientCode').value.trim();
+  const password = document.getElementById('password').value.trim();
+  const totp = document.getElementById('totp').value.trim();
+
+  if (!apiKey || !clientCode || !password || !totp) {
+    showError('Please fill in all login fields.');
+    return;
+  }
+
+  try {
+    const response = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apiKey, clientCode, password, totp })
+    });
+
+    const payload = await response.json();
+    if (!response.ok || !payload.success) {
+      throw new Error(payload.message || 'Login failed.');
+    }
+
+    state.apiKey = apiKey;
+    state.jwtToken = payload.jwtToken;
+    state.userName = payload.userName || clientCode;
+
+    document.getElementById('userLabel').textContent = state.userName;
+    loginScreen.classList.add('hidden');
+    appShell.classList.remove('hidden');
+    clearError();
+    setStatus(true, 'Connected');
+    logTrade('Login successful.');
+    await fetchQuote();
+  } catch (error) {
+    console.error(error);
+    showError(error.message || 'Login failed.');
+    setStatus(false, 'Auth Failed');
+  }
+}
+
+async function fetchQuote() {
+  if (!state.apiKey || !state.jwtToken) return;
+
+  const exchange = document.getElementById('exchangeSelect').value;
+  const symbol = document.getElementById('symbolInput').value.trim() || 'SBIN-EQ';
+  const token = document.getElementById('tokenInput').value.trim() || '3045';
+
+  try {
+    const response = await fetch('/api/quote', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apiKey: state.apiKey, jwtToken: state.jwtToken, exchange, token })
+    });
+
+    const payload = await response.json();
+    if (!response.ok || !payload.success) {
+      throw new Error(payload.message || 'Quote fetch failed.');
+    }
+
+    state.quote = payload.quote;
+    const ltp = Number(state.quote.ltp || 0);
+    const prevClose = Number(state.quote.close || ltp || 100);
+    state.chartCandles = buildCandlesFromQuote(ltp, prevClose, 24);
+
+    renderQuote(payload.quote, symbol, exchange, token);
+    renderCandlestickChart();
+    await fetchAiSignal();
+    setStatus(true, 'Live');
+    logTrade(`Quote refreshed for ${symbol} (${exchange}).`);
+  } catch (error) {
+    console.error(error);
+    setStatus(false, 'Quote Error');
+    logTrade(`Quote error: ${error.message}`);
+  }
+}
+
+function renderQuote(quote, symbol, exchange, token) {
+  const ltp = Number(quote.ltp || 0);
+  const previousClose = Number(quote.close || 0);
+  const delta = ltp - previousClose;
+  const pct = previousClose ? (delta / previousClose) * 100 : 0;
+
+  document.getElementById('symbolName').textContent = symbol;
+  document.getElementById('symbolMeta').textContent = `${exchange} • Token ${token}`;
+  document.getElementById('chartSubtitle').textContent = `${exchange} • ${symbol} • AI Signal`;
+  document.getElementById('ltpPrice').textContent = formatPrice(ltp);
+
+  const changeEl = document.getElementById('ltpChange');
+  changeEl.textContent = `${delta >= 0 ? '+' : ''}${delta.toFixed(2)} (${pct.toFixed(2)}%)`;
+  changeEl.className = 'ltp-change ' + (delta >= 0 ? 'up' : 'down');
+
+  document.getElementById('openValue').textContent = formatPrice(quote.open);
+  document.getElementById('highValue').textContent = formatPrice(quote.high);
+  document.getElementById('lowValue').textContent = formatPrice(quote.low);
+  document.getElementById('volumeValue').textContent = formatNumber(quote.tradeVolume || quote.volume || 0);
+
+  const buy = quote.depth?.buy || [];
+  const sell = quote.depth?.sell || [];
+  const rows = [];
+  const maxLevel = Math.max(buy.length, sell.length, 6);
+
+  for (let i = 0; i < maxLevel; i++) {
+    const b = buy[i] || { quantity: '', orders: '', price: '' };
+    const s = sell[i] || { quantity: '', orders: '', price: '' };
+    rows.push(`
+      <tr>
+        <td class="green">${b.quantity !== '' ? formatNumber(b.quantity) : '—'}</td>
+        <td class="muted">${b.orders || '—'}</td>
+        <td>${b.price !== '' ? formatPrice(b.price) : '—'}</td>
+        <td class="muted">${s.orders || '—'}</td>
+        <td class="red">${s.quantity !== '' ? formatNumber(s.quantity) : '—'}</td>
+      </tr>
+    `);
+  }
+
+  document.getElementById('depthTableBody').innerHTML = rows.join('');
+}
+
+function parseOffsets(input) {
+  return String(input || '')
+    .split(',')
+    .map((value) => Number(value.trim()))
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .sort((a, b) => a - b);
+}
+
+function generateStrategy() {
+  if (!state.quote) {
+    logTrade('No live quote available. Load a symbol before generating a plan.');
+    return;
+  }
+
+  const symbol = document.getElementById('symbolInput').value.trim() || 'SBIN-EQ';
+  const ltp = Number(state.quote.ltp || 0);
+  const strategyType = document.getElementById('strategyType').value;
+  const tradeSide = document.getElementById('tradeSide').value;
+  const totalQty = Number(document.getElementById('strategyQty').value || 0);
+  const tpOffset = Number(document.getElementById('tpOffset').value || 1.5);
+  const slOffset = Number(document.getElementById('slOffset').value || 0.8);
+  const offsets = parseOffsets(document.getElementById('levelOffsets').value || '0.5,1,2,3');
+
+  if (!ltp || !totalQty || !offsets.length) {
+    logTrade('Strategy parameters are invalid.');
+    return;
+  }
+
+  const direction = tradeSide === 'BUY' ? 1 : -1;
+  const qtyWeights = [0.35, 0.25, 0.2, 0.2];
+  const plan = offsets.map((offset, index) => {
+    const entryPrice = Number((ltp + direction * offset).toFixed(2));
+    const qty = Math.max(1, Math.round(totalQty * (qtyWeights[index] || 0.2)));
+    const tp = Number((entryPrice + (direction === 1 ? tpOffset : -tpOffset)).toFixed(2));
+    const sl = Number((entryPrice - (direction === 1 ? slOffset : -slOffset)).toFixed(2));
+
+    return { level: index + 1, side: tradeSide, entry: entryPrice, qty, tp, sl, strategyType };
+  });
+
+  state.strategyPlan = plan;
+  strategyList.innerHTML = plan.map((item) => `
+    <li><strong>Level ${item.level}:</strong> ${item.side} @ ${formatPrice(item.entry)} | Qty ${item.qty} | TP ${formatPrice(item.tp)} | SL ${formatPrice(item.sl)}</li>
+  `).join('');
+
+  logTrade(`Generated ${plan.length}-level ${strategyType} plan for ${symbol}.`);
+}
+
+function placeDemoOrder() {
+  if (!state.strategyPlan.length) generateStrategy();
+  if (!state.strategyPlan.length) {
+    logTrade('No strategy plan generated.');
+    return;
+  }
+
+  const first = state.strategyPlan[0];
+  const payload = {
+    symbol: document.getElementById('symbolInput').value.trim() || 'SBIN-EQ',
+    exchange: document.getElementById('exchangeSelect').value,
+    side: first.side,
+    quantity: first.qty,
+    price: first.entry,
+    takeProfit: first.tp,
+    stopLoss: first.sl,
+    productType: 'CNC',
+    orderType: 'LIMIT'
   };
 
-  if (jwtToken) {
-    headers.Authorization = 'Bearer ' + jwtToken;
-  }
-
-  return headers;
+  logTrade(`Demo order prepared: ${JSON.stringify(payload)}`);
 }
 
-async function loginAngelOne({ apiKey, clientCode, password, totp }) {
-  const response = await axios.post(
-    `${BASE}/rest/auth/angelbroking/user/v1/loginByPassword`,
-    { clientcode: clientCode, password, totp },
-    { headers: buildHeaders({ apiKey }) }
-  );
-
-  const data = response.data || {};
-  if (!data.status || !data.data) {
-    throw new Error(data.message || 'Angel One login failed.');
-  }
-
-  return {
-    jwtToken: data.data.jwtToken,
-    refreshToken: data.data.refreshToken || '',
-    feedToken: data.data.feedToken || ''
-  };
+function initializeChart() {
+  state.chartCandles = buildCandlesFromQuote(100, 98, 24);
+  renderCandlestickChart();
+  document.getElementById('signalLabel').textContent = 'Neutral';
+  document.getElementById('signalConfidence').textContent = '—';
+  document.getElementById('signalTrend').textContent = '—';
+  document.getElementById('signalVolume').textContent = '—';
 }
 
-async function fetchQuote({ apiKey, jwtToken, exchange, token }) {
-  const response = await axios.post(
-    `${BASE}/rest/secure/angelbroking/market/v1/quote`,
-    {
-      mode: 'FULL',
-      exchangeTokens: {
-        [exchange]: [token]
-      }
-    },
-    { headers: buildHeaders({ apiKey, jwtToken }) }
-  );
+document.getElementById('loginBtn').addEventListener('click', doLogin);
+document.getElementById('logoutBtn').addEventListener('click', () => {
+  state.apiKey = '';
+  state.jwtToken = '';
+  state.userName = '';
+  state.quote = null;
+  state.strategyPlan = [];
+  appShell.classList.add('hidden');
+  loginScreen.classList.remove('hidden');
+  setStatus(false, 'Disconnected');
+  logTrade('Logged out.');
+});
+document.getElementById('loadQuoteBtn').addEventListener('click', fetchQuote);
+document.getElementById('generateStrategyBtn').addEventListener('click', generateStrategy);
+document.getElementById('placeDemoOrderBtn').addEventListener('click', placeDemoOrder);
 
-  const data = response.data || {};
-  if (!data.status || !data.data || !data.data.fetched || !data.data.fetched.length) {
-    throw new Error(data.message || 'Quote fetch failed.');
-  }
+window.addEventListener('DOMContentLoaded', () => {
+  initializeChart();
+  setStatus(false, 'Disconnected');
+  logTrade('System ready. Log in to begin.');
+});
 
-  return data.data.fetched[0];
+window.renderQuote = renderQuote;
+window.fetchAiSignal = fetchAiSignal;
+window.renderCandlestickChart = renderCandlestickChart;
+
+setStatus(false, 'Disconnected');
+logTrade('System ready. Log in to begin.');
+
+if (window.location.pathname === '/') {
+  document.getElementById('appShell').classList.add('hidden');
 }
 
-module.exports = { loginAngelOne, fetchQuote };
+if (typeof window !== 'undefined') {
+  window.addEventListener('resize', renderCandlestickChart);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Data loaded
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+n
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+n
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+n
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+n
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+n
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+n
+
+
+
+
+n
+
+
+
+
+
+
+
+
+
+
+
+
+n
+
+
+
+
+
+n
+
+
+
+
+
+
+
+
+
+n
+
+
+
+
+
+n
+
+
+
+
+
+n
+
+
+
+
+
+
+n
+
+
+n
+
+
+
+
+
+
+
+
+
+
+
+
+
+n
+
+
+
+
+
+n
+
+
+
+
+
+n
+
+
+
+
+
+n
+
+
+
+
+n
+
+
+
+n
+
+
+
+
+
+n
+
+
+n
+
+
+
+
+
+n
+
+
+
+
+
+n
+
+
+
+
+n
+
+
+
+n
+
+
+
+
+n
+
+
+
+n
+
+
+
+
+n
+
+
+n
+
+
+
+
+n
+
+
+
+n
+
+
+n
+
+
+
+n
+
+
+n
+
+
+
+
+n
+
+
+
+
+n
+
+
+
+
+n
+
+
+
+
+n
+
+n
+
+
+
+n
+
+
+
+
+n
+
+
+
+
+
+n
+
+
+n
+n
+
+n
+
+
+
+n
+
+
+n
+
+
+
+
+n
+
+
+n
+
+n
+
+
+
+n
+
+
+
+n
+
+
+
+n
+
+
+n
+
+
+
+
+n
+
+
+n
+n
+
+
+
+n
+
+
+
+n
+
+
+n
+
+
+
+
+n
+
+
+n
+
+n
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+n
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+
+n
+
+
+
+
+n
+
+
+n
+n
+
+
+
+n
+
+
+n
+
+
+
+n
+
+
+n
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+n
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+n
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+
+a
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+n
+
+
+
+
+
+
+
+
+
+
+
+
+n
+
+
+
+
+
+
+
+
+
+
+
+
+n
+
+
+
+
+
+
+
+
+n
+
+
+
+
+
+
+
+
+
+
+n
+
+
+
+
+
+
+
+
+
+
+
+
+n
+
+
+
+
+
+
+
+
+
+
+
+n
+
+
+n
+n
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+
+n
+
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+n
+
+n
+
+n
+
+n
+
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+
+n
+
+
+n
+
+
+n
+
+n
+
+n
+
+
+n
+
+
+n
+
+n
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+Source URL: https://github.com/vipinssspppvipin-sketch/Ai-Trading/blob/main/public/index.html
+Repo: /Ai-Trading
+CommitOID: main
+BlobSha: 7b3e452e17b74628965701d7d1aaf9e27cda87da
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+n
+
+
+
+
+
+
+n
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+n
+
+n
+
+n
+
+n
+
+n
+
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+n
+
+n
+
+n
+
+n
+
+n
+n
+
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+
+n
+
+n
+
+n
+
+n
+
+n
+
+
+n
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+n
+
+ n
+
+
+
+
+
+
+
+
+
+"},{"name":"AI Trading"}
