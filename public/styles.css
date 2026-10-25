@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Trading</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div id="loginScreen" class="login-screen">
+      <div class="login-card">
+        <h1>AI <span>Trading</span></h1>
+        <p class="subtitle">Angel One SmartAPI dashboard with multi-level strategy planning.</p>
+
+        <div id="loginError" class="error-box"></div>
+
+        <div class="field-group">
+          <label>API Key</label>
+          <input id="apiKey" type="text" placeholder="SmartAPI key" />
+        </div>
+        <div class="field-group">
+          <label>Client Code</label>
+          <input id="clientCode" type="text" placeholder="Client code" />
+        </div>
+        <div class="field-group">
+          <label>Password / MPIN</label>
+          <input id="password" type="password" placeholder="Password or MPIN" />
+        </div>
+        <div class="field-group">
+          <label>TOTP</label>
+          <input id="totp" type="text" maxlength="6" placeholder="6-digit TOTP" />
+        </div>
+
+        <button id="loginBtn" class="primary-btn">Connect</button>
+      </div>
+    </div>
+
+    <div id="appShell" class="app-shell hidden">
+      <header class="topbar">
+        <div class="brand">AI <span>Trading</span></div>
+        <div class="topbar-right">
+          <span class="status-pill"><span id="statusDot" class="status-dot"></span> <span id="statusText">Disconnected</span></span>
+          <button id="logoutBtn" class="secondary-btn">Logout</button>
+        </div>
+      </header>
+
+      <main class="main-grid">
+        <section class="panel">
+          <div class="panel-header">
+            <h3>Live Market</h3>
+            <span id="userLabel" class="small muted">User</span>
+          </div>
+
+          <div class="market-body">
+            <div class="toolbar">
+              <div class="field-group compact">
+                <label>Exchange</label>
+                <select id="exchangeSelect">
+                  <option value="NSE">NSE</option>
+                  <option value="NFO">NFO</option>
+                  <option value="BSE">BSE</option>
+                </select>
+              </div>
+              <div class="field-group compact">
+                <label>Symbol</label>
+                <input id="symbolInput" value="SBIN-EQ" />
+              </div>
+              <div class="field-group compact">
+                <label>Token</label>
+                <input id="tokenInput" value="3045" />
+              </div>
+              <button id="loadQuoteBtn" class="primary-btn">Load</button>
+            </div>
+
+            <div class="ltp-box">
+              <div>
+                <div id="symbolName" class="symbol-name">SBIN-EQ</div>
+                <div id="symbolMeta" class="muted small">NSE • Token 3045</div>
+              </div>
+              <div class="price-box">
+                <div id="ltpPrice" class="ltp-price">—</div>
+                <div id="ltpChange" class="ltp-change">—</div>
+              </div>
+            </div>
+
+            <div class="stats-grid">
+              <div class="stat-box">
+                <div class="stat-label">Open</div>
+                <div id="openValue" class="stat-value">—</div>
+              </div>
+              <div class="stat-box">
+                <div class="stat-label">High</div>
+                <div id="highValue" class="stat-value green">—</div>
+              </div>
+              <div class="stat-box">
+                <div class="stat-label">Low</div>
+                <div id="lowValue" class="stat-value red">—</div>
+              </div>
+              <div class="stat-box">
+                <div class="stat-label">Volume</div>
+                <div id="volumeValue" class="stat-value">—</div>
+              </div>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Bid Qty</th>
+                    <th>Bid Orders</th>
+                    <th>Price</th>
+                    <th>Ask Orders</th>
+                    <th>Ask Qty</th>
+                  </tr>
+                </thead>
+                <tbody id="depthTableBody">
+                  <tr>
+                    <td colspan="5" class="muted">Waiting for quote...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <aside class="side-stack">
+          <section class="panel strategy-panel">
+            <div class="panel-header">
+              <h3>Strategy Setup</h3>
+            </div>
+
+            <div class="strategy-body">
+              <div class="two-col">
+                <div class="field-group">
+                  <label>Strategy</label>
+                  <select id="strategyType">
+                    <option value="breakout">Breakout Ladder</option>
+                    <option value="pullback">Pullback Add-On</option>
+                    <option value="scalp">Scalp Grid</option>
+                  </select>
+                </div>
+                <div class="field-group">
+                  <label>Side</label>
+                  <select id="tradeSide">
+                    <option value="BUY">BUY</option>
+                    <option value="SELL">SELL</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="two-col">
+                <div class="field-group">
+                  <label>Qty</label>
+                  <input id="strategyQty" type="number" value="50" min="1" />
+                </div>
+                <div class="field-group">
+                  <label>Risk %</label>
+                  <input id="riskPercent" type="number" value="1.5" step="0.1" />
+                </div>
+              </div>
+
+              <div class="field-group">
+                <label>Levels</label>
+                <input id="levelOffsets" type="text" value="0.5, 1.0, 2.0, 3.5" />
+              </div>
+
+              <div class="two-col">
+                <div class="field-group">
+                  <label>TP Offset</label>
+                  <input id="tpOffset" type="number" value="1.8" step="0.1" />
+                </div>
+                <div class="field-group">
+                  <label>SL Offset</label>
+                  <input id="slOffset" type="number" value="0.8" step="0.1" />
+                </div>
+              </div>
+
+              <div class="actions">
+                <button id="generateStrategyBtn" class="primary-btn">Generate Plan</button>
+                <button id="placeDemoOrderBtn" class="warning-btn">Place Demo Order</button>
+              </div>
+
+              <ul id="strategyList" class="strategy-list">
+                <li>Waiting for strategy generation.</li>
+              </ul>
+            </div>
+          </section>
+
+          <section class="panel log-panel">
+            <div class="panel-header">
+              <h3>Trade Log</h3>
+            </div>
+            <div id="tradeLogBox" class="log-box">System ready.</div>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

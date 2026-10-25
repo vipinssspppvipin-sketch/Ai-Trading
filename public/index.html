@@ -1,0 +1,63 @@
+const axios = require('axios');
+
+const BASE = 'https://apiconnect.angelone.in';
+
+function buildHeaders({ apiKey, jwtToken }) {
+  const headers = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+    'X-UserType': 'USER',
+    'X-SourceID': 'WEB',
+    'X-ClientLocalIP': '127.0.0.1',
+    'X-ClientPublicIP': '127.0.0.1',
+    'X-MACAddress': '00:00:00:00:00:00',
+    'X-PrivateKey': apiKey
+  };
+
+  if (jwtToken) {
+    headers.Authorization = 'Bearer ' + jwtToken;
+  }
+
+  return headers;
+}
+
+async function loginAngelOne({ apiKey, clientCode, password, totp }) {
+  const response = await axios.post(
+    `${BASE}/rest/auth/angelbroking/user/v1/loginByPassword`,
+    { clientcode: clientCode, password, totp },
+    { headers: buildHeaders({ apiKey }) }
+  );
+
+  const data = response.data || {};
+  if (!data.status || !data.data) {
+    throw new Error(data.message || 'Angel One login failed.');
+  }
+
+  return {
+    jwtToken: data.data.jwtToken,
+    refreshToken: data.data.refreshToken || '',
+    feedToken: data.data.feedToken || ''
+  };
+}
+
+async function fetchQuote({ apiKey, jwtToken, exchange, token }) {
+  const response = await axios.post(
+    `${BASE}/rest/secure/angelbroking/market/v1/quote`,
+    {
+      mode: 'FULL',
+      exchangeTokens: {
+        [exchange]: [token]
+      }
+    },
+    { headers: buildHeaders({ apiKey, jwtToken }) }
+  );
+
+  const data = response.data || {};
+  if (!data.status || !data.data || !data.data.fetched || !data.data.fetched.length) {
+    throw new Error(data.message || 'Quote fetch failed.');
+  }
+
+  return data.data.fetched[0];
+}
+
+module.exports = { loginAngelOne, fetchQuote };
