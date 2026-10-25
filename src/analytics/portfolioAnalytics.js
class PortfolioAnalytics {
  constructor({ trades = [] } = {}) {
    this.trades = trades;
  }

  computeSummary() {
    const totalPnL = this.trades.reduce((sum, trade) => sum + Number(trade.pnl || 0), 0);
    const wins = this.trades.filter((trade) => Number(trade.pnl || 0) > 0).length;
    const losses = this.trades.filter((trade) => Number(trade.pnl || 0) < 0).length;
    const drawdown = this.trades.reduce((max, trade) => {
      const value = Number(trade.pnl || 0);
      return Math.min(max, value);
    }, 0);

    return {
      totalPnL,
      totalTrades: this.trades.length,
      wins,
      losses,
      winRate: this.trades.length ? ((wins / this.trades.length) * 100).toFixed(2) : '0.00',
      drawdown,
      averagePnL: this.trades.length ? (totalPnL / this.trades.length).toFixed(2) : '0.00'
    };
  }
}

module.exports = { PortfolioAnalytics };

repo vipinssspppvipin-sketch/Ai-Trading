@@ -1,0 +1,104 @@
+class PaperTradingEngine {
+  constructor() {
+    this.trades = [];
+    this.openPositions = [];
+  }
+
+  recordTrade({ symbol, side, entryPrice, quantity, exitPrice, pnl, strategy, timestamp }) {
+    this.trades.push({
+      symbol,
+      side,
+      entryPrice: Number(entryPrice),
+      quantity: Number(quantity),
+      exitPrice: Number(exitPrice),
+      pnl: Number(pnl),
+      strategy,
+      timestamp: timestamp || new Date().toISOString()
+    });
+  }
+
+  openPosition({ symbol, side, quantity, entryPrice, strategy, timestamp }) {
+    this.openPositions = this.openPositions.filter((p) => p.symbol !== symbol || p.side !== side);
+    this.openPositions.push({
+      symbol,
+      side,
+      quantity: Number(quantity),
+      entryPrice: Number(entryPrice),
+      strategy,
+      timestamp: timestamp || new Date().toISOString()
+    });
+    return { success: true, position: this.openPositions[this.openPositions.length - 1] };
+  }
+
+  closePosition({ symbol, side, exitPrice, strategy, timestamp }) {
+    const position = this.openPositions.find((p) => p.symbol === symbol && p.side === side);
+    if (!position) {
+      return { success: false, message: 'No matching position found.' };
+    }
+
+    const pnl = side === 'BUY'
+      ? (Number(exitPrice) - Number(position.entryPrice)) * Number(position.quantity)
+      : (Number(position.entryPrice) - Number(exitPrice)) * Number(position.quantity);
+
+    const closedPosition = {
+      symbol,
+      side,
+      quantity: Number(position.quantity),
+      entryPrice: Number(position.entryPrice),
+      exitPrice: Number(exitPrice),
+      pnl,
+      strategy: strategy || position.strategy,
+      timestamp: timestamp || new Date().toISOString()
+    };
+
+    this.trades.push(closedPosition);
+    this.openPositions = this.openPositions.filter((p) => !(p.symbol === symbol && p.side === side));
+
+    return { success: true, trade: closedPosition };
+  }
+
+  simulateTrade({ symbol, side, quantity, entryPrice, currentPrice, strategy, timestamp }) {
+    const pnl = side === 'BUY'
+      ? ((Number(currentPrice) - Number(entryPrice)) * Number(quantity))
+      : ((Number(entryPrice) - Number(currentPrice)) * Number(quantity));
+
+    const trade = {
+      symbol,
+      side,
+      quantity: Number(quantity),
+      entryPrice: Number(entryPrice),
+      exitPrice: Number(currentPrice),
+      pnl: Number(pnl),
+      strategy,
+      timestamp: timestamp || new Date().toISOString()
+    };
+
+    this.trades.push(trade);
+    return { success: true, trade };
+  }
+
+  getTradeHistory() {
+    return this.trades;
+  }
+
+  getOpenPositions() {
+    return this.openPositions;
+  }
+
+  getSummary() {
+    const totalPnL = this.trades.reduce((sum, trade) => sum + Number(trade.pnl || 0), 0);
+    const wins = this.trades.filter((trade) => Number(trade.pnl || 0) > 0).length;
+    const losses = this.trades.filter((trade) => Number(trade.pnl || 0) < 0).length;
+
+    return {
+      totalTrades: this.trades.length,
+      totalPnL,
+      wins,
+      losses,
+      winRate: this.trades.length ? ((wins / this.trades.length) * 100).toFixed(2) : '0.00',
+      openPositions: this.openPositions.length
+    };
+  }
+}
+
+module.exports = { PaperTradingEngine };

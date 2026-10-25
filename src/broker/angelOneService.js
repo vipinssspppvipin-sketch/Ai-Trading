@@ -1,0 +1,102 @@
+const axios = require('axios');
+
+class AngelOneService {
+  constructor({ baseUrl = process.env.ANGELONE_API_BASE || 'https://apiconnect.angelone.in' } = {}) {
+    this.baseUrl = baseUrl;
+  }
+
+  buildHeaders({ apiKey, jwtToken }) {
+    const headers = {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      'X-UserType': 'USER',
+      'X-SourceID': 'WEB',
+      'X-ClientLocalIP': '127.0.0.1',
+      'X-ClientPublicIP': '127.0.0.1',
+      'X-MACAddress': '00:00:00:00:00:00',
+      'X-PrivateKey': apiKey
+    };
+
+    if (jwtToken) {
+      headers.Authorization = 'Bearer ' + jwtToken;
+    }
+
+    return headers;
+  }
+
+  async loginByPassword({ apiKey, clientCode, password, totp }) {
+    const response = await axios.post(
+      `${this.baseUrl}/rest/auth/angelbroking/user/v1/loginByPassword`,
+      { clientcode: clientCode, password, totp },
+      { headers: this.buildHeaders({ apiKey }) }
+    );
+
+    const data = response.data || {};
+    if (!data.status || !data.data) {
+      throw new Error(data.message || 'Angel One login failed.');
+    }
+
+    const profileResponse = await axios.get(
+      `${this.baseUrl}/rest/secure/angelbroking/user/v1/getProfile`,
+      { headers: this.buildHeaders({ apiKey, jwtToken: data.data.jwtToken }) }
+    );
+
+    const profile = profileResponse.data || {};
+
+    return {
+      jwtToken: data.data.jwtToken,
+      refreshToken: data.data.refreshToken || '',
+      feedToken: data.data.feedToken || '',
+      userName: profile.data?.name || clientCode,
+      apiKey,
+      clientCode
+    };
+  }
+
+  async fetchQuote({ apiKey, jwtToken, exchange, token }) {
+    const response = await axios.post(
+      `${this.baseUrl}/rest/secure/angelbroking/market/v1/quote`,
+      {
+        mode: 'FULL',
+        exchangeTokens: { [exchange]: [token] }
+      },
+      { headers: this.buildHeaders({ apiKey, jwtToken }) }
+    );
+
+    const data = response.data || {};
+    if (!data.status || !data.data || !data.data.fetched || !data.data.fetched.length) {
+      throw new Error(data.message || 'Quote fetch failed.');
+    }
+
+    return data.data.fetched[0];
+  }
+
+  async placeOrder({ apiKey, jwtToken, symbol, exchange, token, side, quantity, price, productType = 'CNC', orderType = 'LIMIT' }) {
+    const payload = {
+      exchange,
+      tradingSymbol: symbol,
+      symbolToken: token,
+      transactionType: side,
+      quantity: Number(quantity),
+      price: Number(price),
+      productType,
+      orderType,
+      validity: 'DAY'
+    };
+
+    const response = await axios.post(
+      `${this.baseUrl}/rest/secure/angelbroking/order/v1/placeOrder`,
+      payload,
+      { headers: this.buildHeaders({ apiKey, jwtToken }) }
+    );
+
+    const data = response.data || {};
+    if (!data.status) {
+      throw new Error(data.message || 'Order placement failed.');
+    }
+
+    return { status: 'accepted', response: data };
+  }
+}
+
+module.exports = { AngelOneService };
