@@ -18,6 +18,7 @@
         --red: #ff6886;
         --red-soft: rgba(255, 104, 134, 0.12);
         --yellow: #ffd166;
+        --yellow-soft: rgba(255, 209, 102, 0.1);
         --blue: #71b7ff;
       }
 
@@ -313,6 +314,35 @@
             </div>
           </section>
 
+          <section class="panel portfolio-panel">
+            <div class="panel-header"><h3>Portfolio</h3></div>
+            <div class="strategy-body">
+              <div class="stats-grid" style="margin-bottom: 12px;">
+                <div class="stat-box"><div class="stat-label">Net P/L</div><div id="portfolioPnL" class="stat-value green">₹0.00</div></div>
+                <div class="stat-box"><div class="stat-label">Win Rate</div><div id="portfolioWinRate" class="stat-value">0%</div></div>
+                <div class="stat-box"><div class="stat-label">Trades</div><div id="portfolioTrades" class="stat-value">0</div></div>
+                <div class="stat-box"><div class="stat-label">Open Pos</div><div id="portfolioOpenPos" class="stat-value">0</div></div>
+              </div>
+
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Symbol</th>
+                      <th>Side</th>
+                      <th>Qty</th>
+                      <th>P/L</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="positionsTableBody">
+                    <tr><td colspan="5" class="muted">No portfolio positions yet.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
           <section class="panel log-panel">
             <div class="panel-header"><h3>Trade Log</h3></div>
             <div id="tradeLogBox" class="log-box">System ready.</div>
@@ -328,7 +358,9 @@
         userName: '',
         quote: null,
         strategyPlan: [],
-        chartData: []
+        chartData: [],
+        positions: [],
+        trades: []
       };
 
       const loginScreen = document.getElementById('loginScreen');
@@ -367,6 +399,72 @@
         if (n >= 100000) return `${(n / 100000).toFixed(2)} L`;
         if (n >= 1000) return n.toLocaleString('en-IN');
         return n.toString();
+      }
+      function formatCurrency(value) {
+        const amount = Number(value || 0);
+        return `₹${amount.toFixed(2)}`;
+      }
+
+      function computePortfolioMetrics() {
+        const positions = state.positions || [];
+        const currentLtp = Number(state.quote?.ltp || 0);
+        let totalPnl = 0;
+        let profitable = 0;
+        let totalTrades = state.trades.length;
+
+        positions.forEach((position) => {
+          const price = position.entry || currentLtp;
+          const pnl = position.side === 'BUY'
+            ? (currentLtp - price) * position.quantity
+            : (price - currentLtp) * position.quantity;
+          position.pnl = pnl;
+          totalPnl += pnl;
+          if (pnl > 0) profitable += 1;
+        });
+
+        const winRate = totalTrades ? Math.round((state.trades.filter(trade => Number(trade.pnl || 0) > 0).length / totalTrades) * 100) : 0;
+
+        return {
+          totalPnl,
+          winRate,
+          openPositions: positions.length,
+          totalTrades,
+          profitCount: profitable
+        };
+      }
+
+      function renderPortfolio() {
+        const metrics = computePortfolioMetrics();
+        const pnlEl = document.getElementById('portfolioPnL');
+        const winRateEl = document.getElementById('portfolioWinRate');
+        const tradesEl = document.getElementById('portfolioTrades');
+        const openPosEl = document.getElementById('portfolioOpenPos');
+        const rowsEl = document.getElementById('positionsTableBody');
+
+        pnlEl.textContent = formatCurrency(metrics.totalPnl);
+        pnlEl.className = 'stat-value ' + (metrics.totalPnl >= 0 ? 'green' : 'red');
+        winRateEl.textContent = `${metrics.winRate}%`;
+        tradesEl.textContent = String(metrics.totalTrades);
+        openPosEl.textContent = String(metrics.openPositions);
+
+        if (!state.positions.length) {
+          rowsEl.innerHTML = '<tr><td colspan="5" class="muted">No portfolio positions yet.</td></tr>';
+          return;
+        }
+
+        rowsEl.innerHTML = state.positions.map((position) => {
+          const currentPnl = Number(position.pnl || 0);
+          const status = currentPnl >= 0 ? 'Profitable' : 'Open';
+          return `
+            <tr>
+              <td>${position.symbol}</td>
+              <td>${position.side}</td>
+              <td>${position.quantity}</td>
+              <td class="${currentPnl >= 0 ? 'green' : 'red'}">${formatCurrency(currentPnl)}</td>
+              <td class="${status === 'Profitable' ? 'green' : 'muted'}">${status}</td>
+            </tr>
+          `;
+        }).join('');
       }
 
       async function doLogin() {
@@ -430,6 +528,7 @@
           renderQuote(payload.quote, symbol, exchange, token);
           setStatus(true, 'Live');
           logTrade(`Quote refreshed for ${symbol} (${exchange}).`);
+          renderPortfolio();
           await fetchAiSignal();
         } catch (error) {
           console.error(error);
@@ -512,7 +611,7 @@
           const qty = Math.max(1, Math.round(totalQty * (qtyWeights[index] || 0.2)));
           const tp = Number((entryPrice + (direction === 1 ? tpOffset : -tpOffset)).toFixed(2));
           const sl = Number((entryPrice - (direction === 1 ? slOffset : -slOffset)).toFixed(2));
-          return { level: index + 1, side: tradeSide, entry: entryPrice, qty, tp, sl, strategyType };
+          return { level: index + 1, side: tradeSide, entry: entryPrice, qty, tp, sl, strategyType, symbol };
         });
 
         state.strategyPlan = plan;
@@ -520,6 +619,37 @@
           <li><strong>Level ${item.level}:</strong> ${item.side} @ ${formatPrice(item.entry)} | Qty ${item.qty} | TP ${formatPrice(item.tp)} | SL ${formatPrice(item.sl)}</li>
         `).join('');
         logTrade(`Generated ${plan.length}-level ${strategyType} plan for ${symbol}.`);
+      }
+
+      function addTradeRecord(payload) {
+        const timestamp = new Date().toISOString();
+        const pnl = Number(payload.pnl || 0);
+        state.trades.unshift({
+          timestamp,
+          symbol: payload.symbol,
+          side: payload.side,
+          quantity: Number(payload.quantity || 0),
+          price: Number(payload.price || 0),
+          pnl,
+          status: payload.status || 'Open'
+        });
+
+        const existing = state.positions.find((position) => position.symbol === payload.symbol && position.side === payload.side);
+        if (existing) {
+          existing.quantity += Number(payload.quantity || 0);
+          existing.entry = Number((existing.entry + Number(payload.price || 0)) / 2);
+        } else {
+          state.positions.push({
+            symbol: payload.symbol,
+            side: payload.side,
+            quantity: Number(payload.quantity || 0),
+            entry: Number(payload.price || 0),
+            pnl: pnl
+          });
+        }
+
+        logTrade(`${payload.symbol} demo trade recorded: ${payload.side} ${payload.quantity} @ ${formatPrice(payload.price)} | P/L ${formatCurrency(pnl)}`);
+        renderPortfolio();
       }
 
       function placeDemoOrder() {
@@ -533,7 +663,7 @@
 
         const first = state.strategyPlan[0];
         const payload = {
-          symbol: document.getElementById('symbolInput').value.trim() || 'SBIN-EQ',
+          symbol: first.symbol || document.getElementById('symbolInput').value.trim() || 'SBIN-EQ',
           exchange: document.getElementById('exchangeSelect').value,
           side: first.side,
           quantity: first.qty,
@@ -541,9 +671,11 @@
           takeProfit: first.tp,
           stopLoss: first.sl,
           productType: 'CNC',
-          orderType: 'LIMIT'
+          orderType: 'LIMIT',
+          pnl: (first.side === 'BUY' ? 1 : -1) * first.qty * ((Number(state.quote?.ltp || first.entry) - first.entry) || 0)
         };
-        logTrade(`Demo order prepared: ${JSON.stringify(payload)}`);
+
+        addTradeRecord(payload);
       }
 
       async function fetchAiSignal() {
@@ -708,6 +840,9 @@
         state.userName = '';
         state.quote = null;
         state.strategyPlan = [];
+        state.positions = [];
+        state.trades = [];
+        renderPortfolio();
         appShell.classList.add('hidden');
         loginScreen.classList.remove('hidden');
         setStatus(false, 'Disconnected');
@@ -721,6 +856,7 @@
 
       setStatus(false, 'Disconnected');
       logTrade('System ready. Log in to begin.');
+      renderPortfolio();
       loadChartData();
     </script>
   </body>
